@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.jev-retrieval/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+jev-retrieval.yaml
+.ruff_cache/
