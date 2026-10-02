@@ -1,7 +1,7 @@
 """Adapter conformance suite (FR-S6). Every store must pass every test here.
 
 Runs against: memory, qdrant (embedded), chroma (ephemeral), langchain (InMemoryVectorStore)
-always; pgvector when JEV_RETRIEVAL_TEST_PG_DSN is set; pinecone when JEV_RETRIEVAL_TEST_PINECONE_INDEX
+always; pgvector when CLEF_RAG_TEST_PG_DSN is set; pinecone when CLEF_RAG_TEST_PINECONE_INDEX
 and PINECONE_API_KEY are set (it creates and deletes a namespace).
 """
 
@@ -13,10 +13,10 @@ import uuid
 
 import pytest
 
-from jev_retrieval.stores import MemoryStore
-from jev_retrieval.stores.base import BASE_FILTER_FIELDS
-from jev_retrieval.stores.filters import FilterError
-from jev_retrieval.types import Record
+from clef_rag.stores import MemoryStore
+from clef_rag.stores.base import BASE_FILTER_FIELDS
+from clef_rag.stores.filters import FilterError
+from clef_rag.types import Record
 
 DIM = 4
 
@@ -43,9 +43,9 @@ def _key(recs_or_hits):
 
 
 STORES = ["memory", "qdrant", "chroma", "langchain"]
-if os.environ.get("JEV_RETRIEVAL_TEST_PG_DSN"):
+if os.environ.get("CLEF_RAG_TEST_PG_DSN"):
     STORES.append("pgvector")
-if os.environ.get("JEV_RETRIEVAL_TEST_PINECONE_INDEX") and os.environ.get("PINECONE_API_KEY"):
+if os.environ.get("CLEF_RAG_TEST_PINECONE_INDEX") and os.environ.get("PINECONE_API_KEY"):
     STORES.append("pinecone")
 
 
@@ -57,25 +57,25 @@ def store(request, tmp_path):
         s = MemoryStore()
     elif kind == "qdrant":
         pytest.importorskip("qdrant_client")
-        from jev_retrieval.stores.qdrant import QdrantStore
+        from clef_rag.stores.qdrant import QdrantStore
         s = QdrantStore(":memory:")
     elif kind == "chroma":
         pytest.importorskip("chromadb")
-        from jev_retrieval.stores.chroma import ChromaStore
+        from clef_rag.stores.chroma import ChromaStore
         s = ChromaStore(str(tmp_path / "chroma"))
     elif kind == "langchain":
         pytest.importorskip("langchain_core")
         from langchain_core.embeddings import FakeEmbeddings
         from langchain_core.vectorstores import InMemoryVectorStore
-        from jev_retrieval.stores.langchain import LangChainStore
+        from clef_rag.stores.langchain import LangChainStore
         s = LangChainStore(InMemoryVectorStore(FakeEmbeddings(size=DIM)))
         s.manifest_dir = str(tmp_path / "manifests")
     elif kind == "pgvector":
-        from jev_retrieval.stores.pgvector import PgVectorStore
-        s = PgVectorStore(os.environ["JEV_RETRIEVAL_TEST_PG_DSN"])
+        from clef_rag.stores.pgvector import PgVectorStore
+        s = PgVectorStore(os.environ["CLEF_RAG_TEST_PG_DSN"])
     elif kind == "pinecone":
-        from jev_retrieval.stores.pinecone import PineconeStore
-        s = PineconeStore(os.environ["JEV_RETRIEVAL_TEST_PINECONE_INDEX"])
+        from clef_rag.stores.pinecone import PineconeStore
+        s = PineconeStore(os.environ["CLEF_RAG_TEST_PINECONE_INDEX"])
     s.ensure_collection(name, DIM, "cosine", {**BASE_FILTER_FIELDS, "tag": "keyword", "score": "float",
                                                "flag": "bool", "key": "keyword"})
     s.upsert(name, _records())

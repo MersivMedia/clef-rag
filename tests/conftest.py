@@ -1,4 +1,4 @@
-"""Shared fixtures: a deterministic fake Jev served through httpx.MockTransport.
+"""Shared fixtures: a deterministic fake Clef served through httpx.MockTransport.
 
 The fake answers from keywords so tests can assert pipeline behaviour without
 the network. It speaks the real wire format (POST /v1/systemone, typed answers).
@@ -34,11 +34,12 @@ def _text_of(x: Any) -> str:
     return x if isinstance(x, str) else json.dumps(x)
 
 
-class FakeJev:
+class FakeClef:
     """Callable transport handler. ``fail`` = set of question-id prefixes to 500 on."""
 
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
+        self.urls: List[str] = []
         self.fail_status: Optional[int] = None
         self.fail_times = 0
         self.overrides: Dict[str, Callable[[Any, Any], Any]] = {}
@@ -104,22 +105,25 @@ class FakeJev:
             return httpx.Response(self.fail_status, json={"error": {"type": "overloaded", "message": "busy"}},
                                   headers={"retry-after": "0"})
         answers = {qid: self.answer(qid, q, body["state"]) for qid, q in body["questions"].items()}
-        return httpx.Response(200, json={"model": "jev-1.13.0", "answers": answers,
-                                         "usage": {"input_tokens": 100 + len(json.dumps(body)) // 4,
-                                                   "output_tokens": 10 * len(answers)}})
+        result = {"model": body["model"], "answers": answers,
+                  "usage": {"input_tokens": 100 + len(json.dumps(body)) // 4, "output_tokens": 0}}
+        self.urls.append(str(request.url))
+        # Workers AI wraps the System One body in its standard envelope
+        return httpx.Response(200, json={"result": result, "success": True, "errors": [], "messages": []})
 
 
 @pytest.fixture
-def fake_jev(monkeypatch):
-    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
-    for k in ("AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY"):
-        monkeypatch.delenv(k, raising=False)
-    fj = FakeJev()
+def fake_clef(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "test-key")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-account")
+    monkeypatch.delenv("CLEF_BASE_URL", raising=False)
+    fj = FakeClef()
     return fj, httpx.MockTransport(fj)
 
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    for k in ("TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+    for k in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLEF_BASE_URL", "CLEF_API_KEY",
+              "AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(k, raising=False)

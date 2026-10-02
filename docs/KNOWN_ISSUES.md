@@ -1,40 +1,36 @@
 # Known issues
 
-Current limits of the v1.0 development build. Each has a workaround or a milestone.
+## Not yet measured with Clef
 
-## Quality
+- **Every quality number is upstream and Jev-based.** The questions, thresholds and defaults come from [jev-rag-retrieval](https://github.com/MersivMedia/jev-rag-retrieval/blob/main/docs/RESULTS.md), where they were chosen with Jev. Clef's probabilities may be distributed differently (it is a separate model with a joint schema head and its own calibration training), so `drop_boilerplate: 0.85`, `answer_min: 0.35` and the rest may be too strict or too loose. Run stages in `shadow` mode and use `clef-rag eval` on your data before relying on them.
+- **Workers AI hasn't been called with a real key yet.** The client follows Cloudflare's published schema (request body `model`/`state`/`questions`/`images`, response wrapped in `{"result": ..., "success": ...}`), and the tests use that shape. The first live run may surface differences.
+- **Rate limits are unknown.** Cloudflare hasn't published Clef's Workers AI limits. `max_rps: 20` is a guess; 429s are retried with backoff.
 
-- **Classification can cost recall.** The default (`select: rank`, top 5) lost 4.9 points of recall@10 against vector top 10 on FiQA, where answers spread over several posts; it was within 2 points on SciFact and QASPER ([Results](RESULTS.md#public-datasets-m2-scifact-fiqa-qasper)). Workaround: raise `max_passages` (8 recovered vector recall on all three sets), or run classification in `shadow` mode. `select: threshold` sends less context but lost 4 to 22 points.
-- **The gate misfires on statements.** It asks whether passages "contain the information needed to answer" the query; on SciFact, whose queries are claims, it wrongly refused 26% of answerable ones. On real unanswerable questions (QASPER) it caught 29 to 41%, far fewer than on synthetic ones. Workaround: `gate.mode: shadow` for claim-style or search-box queries, and tune `answer_min` on your own data with `jev-retrieval eval`.
-- **In-house benchmarks overstated the gains.** Jev classification, the gate and paragraph screening clearly helped on both ([Results](RESULTS.md)), but their questions were machine-written and both looked much better than the public sets did. Default thresholds are starting points chosen on small probes. Workaround: run stages in `shadow` mode and compare on your data.
-- **Jev chunking hasn't earned its place.** It tied or lost to `structural` on every benchmark, including QASPER, at about twice the ingest cost, so `structural` is the default. `method: jev` is kept for long text without structure; test it with `jev-retrieval inspect <file> --compare jev` before using it.
-- **Thresholds are per model version.** A new Jev version can shift probabilities. The default model IDs differ by backend (`jev-1.13.0` on TypeSafe, `typesafe-ai/jev` on Vercel, `typesafe/jev-1.13` on OpenRouter); pin `jev.model` if you need stability.
-- **English first.** TypeSafe documents lower accuracy outside English.
+## Backends
 
-## Pipeline
+- **`clef-rag serve` handles one request at a time per process.** A loaded model answers requests in sequence. With `top_k: 30` each query makes about 32 requests, so on one GPU a query's latency is about 32 forward passes. Batching several passages into one request (Clef allows 64 questions per request) is on the roadmap.
+- **`serve` has no TLS.** It's a stdlib HTTP server meant for a private network or behind a reverse proxy. Bearer auth is optional (`--api-key-env`).
+- **`local` and `serve` were tested only on CPU against a tiny random model.** Real Clef-flash (9B) and Clef (27B) haven't been loaded by this code yet. Expect roughly 18 GB and 54 GB of GPU memory for weights in bf16. On GPU, install `flash-linear-attention` and `causal-conv1d`, or transformers falls back to slow reference kernels for Qwen3.5's linear-attention layers.
+- **Videos aren't accepted over HTTP.** Cloudflare's code supports video frames in-process, but the public API has no `videos` field, so `serve` drops it.
+- **Long state is truncated server-side** by Cloudflare's encoder to fit `max_length`. clef-rag's packing budgets (`STATE_BUDGET_TOKENS`, 24,000 estimated tokens) are sized so packed requests fit every backend at its default length.
 
-- **One classification request per candidate.** With `top_k: 30`, a query makes about 32 Jev requests, so one key at the published 40 requests per second handles about 1.25 queries per second. Lower `top_k` for more throughput. Packed multi-passage classification is planned (M4).
-- **Token counts are estimates** unless the `tokens` extra (tiktoken) is installed or you pass your embedder's tokenizer as `token_counter`.
-- **Duplicates are removed within a document only.** Cross-document near-duplicate removal is planned.
-- **`semantic-embedding` chunking embeds every sentence**, which costs one embedding per sentence.
-- **No `reenrich` or `reembed` commands yet.** Changing the taxonomy or embedder means ingesting into a new collection (or `--force` into the same one, for taxonomy changes).
-- **Very long passages are truncated in some Jev questions.** Classification sees the first 6,000 characters of a passage, the gate the first 3,000 per passage, and boundary questions the first 1,200 per sentence or table. Enrichment sends the whole chunk. With the default `max_tokens: 800`, chunks stay under these caps.
+## Pipeline (unchanged from upstream)
 
-## Stores
+- **One classification request per candidate.** With `top_k: 30`, a query makes about 32 Clef requests. Lower `top_k` for throughput and cost.
+- **Token counts are estimates** unless the `tokens` extra (tiktoken) is installed or you pass your embedder's tokenizer as `token_counter`. Clef uses the Qwen tokenizer, so tiktoken counts are approximate too.
+- **Duplicates are removed within a document only.**
+- **`semantic-embedding` chunking embeds every sentence.**
+- **No `reenrich` or `reembed` commands yet.**
+- **Very long passages are truncated in some Clef questions.** Classification sees the first 6,000 characters of a passage, the gate the first 3,000 per passage, and boundary questions the first 1,200 per sentence or table.
 
-- **Pinecone is experimental and untested against a live index** (deferred to M4). The adapter follows the `pinecone` 10.x SDK signatures and has not been run through the conformance suite. Filtered listing and deletes use a filtered query and are capped at 10,000 ids per call.
-- **Chroma** can't express existence tests natively, and its `$ne` / `$nin` also match records without the field. jev-retrieval queries a superset and filters in Python, over-fetching for queries. Very selective negative filters can return fewer than `top_k`.
-- **LangChain bridge** filters in Python after over-fetching (`overfetch`, default 4 times `top_k`), and relies on the wrapped store honouring caller-supplied ids for replace and stale-delete. Use `JevRetrievalEmbeddings` so stored vectors come from jev_retrieval's `embed_text`.
-- **Qdrant embedded mode** ignores payload indexes (a Qdrant limitation); use a Qdrant server for large collections.
-- **`--retrieve-only`** expects jev-retrieval's field layout (text in the store's `text` field). A configurable text field is planned.
+## Stores (unchanged from upstream)
+
+- **Pinecone is experimental and untested against a live index.**
+- **Chroma** can't express existence tests natively, and its `$ne` / `$nin` also match records without the field; clef-rag over-fetches and filters in Python.
+- **LangChain bridge** filters in Python after over-fetching (`overfetch`, default 4 times `top_k`).
+- **Qdrant embedded mode** ignores payload indexes; use a Qdrant server for large collections.
+- **`--retrieve-only`** expects clef-rag's field layout (text in the store's `text` field).
 
 ## Security
 
-- **Injection screening is one layer.** It caught all 6 planted instructions in the messy benchmark (and kept them out of every query's context), but it hasn't been measured on a real attack set. Keep treating retrieved text as data in your LLM's system prompt (jev-retrieval's `answer()` does).
-
-## Measured weaknesses (messy-document benchmark)
-
-- **Paragraph screening drops reference lists.** Bibliographies and citation lists score as boilerplate and are cut (about 1,000 paragraphs in the messy benchmark, almost all references). Good for most RAG, wrong if users ask about citations: use `enrich.screen_paragraphs: shadow` to review first, or `off`.
-- **Occasional false-positive quarantine.** One harmless Wikipedia maintenance tag ("Use dmy dates from January 2026") scored 0.74 for `instructs_ai` and was quarantined. Quarantined paragraphs are stored, not deleted, so they can be audited with `jev-retrieval inspect`.
-- **Injection screening misses what it isn't shown.** Every planted injection so far was its own paragraph. An instruction woven into a sentence of real content shares that paragraph's fate: the paragraph is quarantined whole. This hasn't been measured.
-- **Fixed in 1.0.0.dev0 (paragraph screening):** chunk-level quarantine hid 4 answers that shared a chunk with an injection, and short boilerplate under `min_tokens` was merged into content chunks (0 of 12 dropped). Both are measured fixed in [Results](RESULTS.md#paragraph-level-screening-rerun-of-the-messy-benchmark).
+- **Injection screening is one layer.** Upstream (with Jev) it caught all 6 planted instructions in the messy benchmark. It hasn't been measured with Clef or on a real attack set. Keep treating retrieved text as data in your LLM's system prompt (clef-rag's `answer()` does).

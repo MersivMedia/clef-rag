@@ -1,9 +1,9 @@
 import asyncio
 
-from jev_retrieval.chunk import ChunkConfig, chunk_document
-from jev_retrieval.parse import html_to_markdown
-from jev_retrieval.tokens import estimate_tokens
-from jev_retrieval.types import Document
+from clef_rag.chunk import ChunkConfig, chunk_document
+from clef_rag.parse import html_to_markdown
+from clef_rag.tokens import estimate_tokens
+from clef_rag.types import Document
 
 PAGE = """<html><title>T</title><body>
 <p>Intro paragraph with words.</p>

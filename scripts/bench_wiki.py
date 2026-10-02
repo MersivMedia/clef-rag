@@ -1,10 +1,10 @@
 """Larger-scale benchmark: long Wikipedia articles, many generated questions.
 
-Stages (each resumable; outputs go to .jev-retrieval/bench/ by default):
+Stages (each resumable; outputs go to .clef-rag/bench/ by default):
 
     python scripts/bench_wiki.py build    # fetch articles, generate questions with verbatim evidence
     python scripts/bench_wiki.py ingest   # ingest into one collection per chunker config
-    python scripts/bench_wiki.py query    # run every question through vector-only and full Jev retrieval
+    python scripts/bench_wiki.py query    # run every question through vector-only and full Clef retrieval
     python scripts/bench_wiki.py report   # metrics -> report.json + report.md
 
 Design
@@ -17,10 +17,10 @@ Design
 * Unanswerable questions: generated the same way from held-out articles on related topics that
   are NOT ingested, so a correct system should abstain. Non-abstentions are judged by an LLM
   (do the returned passages actually answer it?) to separate gate misses from overlap.
-* Configs: jev chunking + enrichment (the default), structural, fixed (both without enrichment).
-  Retrieval modes: `vector` (top 8 by similarity, no Jev) and `jev` (route + classify + gate).
+* Configs: clef chunking + enrichment (the default), structural, fixed (both without enrichment).
+  Retrieval modes: `vector` (top 8 by similarity, no Clef) and `clef` (route + classify + gate).
 
-Keys: a Jev key and AI_GATEWAY_API_KEY (embeddings + question generation) from the environment
+Keys: a Clef key and AI_GATEWAY_API_KEY (embeddings + question generation) from the environment
 or ./.env. Needs a store; default is pgvector at $DATABASE_URL, `--store qdrant-local` for embedded.
 """
 
@@ -44,27 +44,27 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from jev_retrieval import Document, Pipeline  # noqa: E402
-from jev_retrieval.chunk import ChunkConfig  # noqa: E402
-from jev_retrieval.enrich import EnrichConfig  # noqa: E402
-from jev_retrieval.envfile import load_env_file  # noqa: E402
-from jev_retrieval.jev import JevConfig  # noqa: E402
-from jev_retrieval.retrieve import ClassifyConfig, GateConfig, RetrieveConfig, RouteConfig  # noqa: E402
-from jev_retrieval.tokens import estimate_tokens  # noqa: E402
+from clef_rag import Document, Pipeline  # noqa: E402
+from clef_rag.chunk import ChunkConfig  # noqa: E402
+from clef_rag.enrich import EnrichConfig  # noqa: E402
+from clef_rag.envfile import load_env_file  # noqa: E402
+from clef_rag.clef import ClefConfig  # noqa: E402
+from clef_rag.retrieve import ClassifyConfig, GateConfig, RetrieveConfig, RouteConfig  # noqa: E402
+from clef_rag.tokens import estimate_tokens  # noqa: E402
 
 INGEST = ["Apollo 11", "Python (programming language)", "French Revolution", "Mount Everest", "Transistor",
           "Great Depression", "Photosynthesis", "CRISPR gene editing", "Tardigrade", "Byzantine Empire"]
 HOLDOUT = ["Apollo 12", "Ruby (programming language)", "Russian Revolution", "K2", "Vacuum tube",
            "Chemosynthesis"]
-UA = "jev-retrieval-bench/1.0 (https://github.com/MersivMedia/jev-rag-retrieval)"
+UA = "clef-rag-bench/1.0 (https://github.com/MersivMedia/clef-rag)"
 GATEWAY = "https://ai-gateway.vercel.sh/v1/chat/completions"
 QGEN_MODEL = "openai/gpt-4.1-mini"
 EMBEDDER = "gateway:openai/text-embedding-3-small"
 CONFIGS = {
-    "jev": dict(chunking=ChunkConfig(method="jev"), enrich=EnrichConfig(mode="on")),
+    "clef": dict(chunking=ChunkConfig(method="clef"), enrich=EnrichConfig(mode="on")),
     "structural": dict(chunking=ChunkConfig(method="structural"), enrich=EnrichConfig(mode="off")),
     "fixed": dict(chunking=ChunkConfig(method="fixed"), enrich=EnrichConfig(mode="off")),
-    # controls: same screening + enrichment as "jev", different chunker; separates the chunker's effect
+    # controls: same screening + enrichment as "clef", different chunker; separates the chunker's effect
     "structural_screen": dict(chunking=ChunkConfig(method="structural"), enrich=EnrichConfig(mode="on")),
     "fixed_screen": dict(chunking=ChunkConfig(method="fixed"), enrich=EnrichConfig(mode="on")),
 }
@@ -234,7 +234,7 @@ def pipeline(a: argparse.Namespace, cfg: str, cache: bool = True) -> Pipeline:
     return Pipeline(store=store_spec(a, cfg), embedder=EMBEDDER,
                     # one cache per config: a shared cache would reuse answers for chunks that two
                     # chunkers cut identically and understate the later configs' cost and latency
-                    jev=JevConfig(cache_dir=None if cache is False else str(Path(a.dir) / f"cache_{cfg}")),
+                    clef=ClefConfig(cache_dir=None if cache is False else str(Path(a.dir) / f"cache_{cfg}")),
                     retrieve=RetrieveConfig(top_k=30, route=RouteConfig(mode="off"),
                                             classify=ClassifyConfig(max_passages=TOP_N), gate=GateConfig()),
                     trace_dir=str(Path(a.dir) / "traces" / cfg), **CONFIGS[cfg])
@@ -308,8 +308,8 @@ async def run_queries(a: argparse.Namespace, qs: List[Dict[str, Any]], cfg: str,
                        "passages": [passage_dict(p) for p in res.passages],
                        "conflicts": [passage_dict(p) for p in res.conflicts],
                        "dropped": [passage_dict(p) for p in res.dropped],
-                       "jev": res.trace.get("jev") if isinstance(res.trace.get("jev"), dict) else None,
-                       "stages": {k: v for k, v in res.trace.items() if k not in ("jev", "jev_model")}}
+                       "clef": res.trace.get("clef") if isinstance(res.trace.get("clef"), dict) else None,
+                       "stages": {k: v for k, v in res.trace.items() if k not in ("clef", "clef_model")}}
             except Exception as exc:
                 row = {"id": q["id"], "error": f"{type(exc).__name__}: {exc}"}
             async with lock:
@@ -325,8 +325,8 @@ async def run_queries(a: argparse.Namespace, qs: List[Dict[str, Any]], cfg: str,
 
 
 async def vector_only(rag: Pipeline, query: str, collection: str) -> Any:
-    """Plain dense retrieval: top TOP_N by similarity, no Jev at all."""
-    from jev_retrieval.retrieve.result import Passage, RetrievalResult
+    """Plain dense retrieval: top TOP_N by similarity, no Clef at all."""
+    from clef_rag.retrieve.result import Passage, RetrievalResult
     vec = await rag.embedder.embed_query(query)
     hits = await asyncio.to_thread(rag.store.query, collection, vec, {"ne": {"quarantined": True}}, TOP_N)
     res = RetrievalResult(query=query)
@@ -355,11 +355,11 @@ async def cmd_latency(a: argparse.Namespace) -> None:
             rows.append({"id": q["id"], "ms": round((time.monotonic() - t0) * 1000, 1),
                          "stages_ms": {**{k: v for k, v in st.items() if k.endswith("_ms")},
                                        **{k: v["ms"] for k, v in st.items() if isinstance(v, dict) and "ms" in v}},
-                         "jev": res.trace.get("jev")})
+                         "clef": res.trace.get("clef")})
         rag.close()
         ms = [r["ms"] for r in rows]
         out[cfg] = {"n": len(rows), "p50": pct(ms, 0.5), "p90": pct(ms, 0.9), "max": max(ms),
-                    "cached": sum((r["jev"] or {}).get("cached", 0) for r in rows), "rows": rows}
+                    "cached": sum((r["clef"] or {}).get("cached", 0) for r in rows), "rows": rows}
         print(f"[{cfg}] sequential, uncached: p50 {out[cfg]['p50']} ms  p90 {out[cfg]['p90']} ms  "
               f"max {out[cfg]['max']} ms  (cached answers: {out[cfg]['cached']})", flush=True)
     (Path(a.dir) / "latency.json").write_text(json.dumps(out, indent=1, default=str))
@@ -417,7 +417,7 @@ async def cmd_report(a: argparse.Namespace) -> None:
     for cfg, ing in ingest.items():
         r = ing["report"]
         chunks = [x["chunks"] for x in r["docs"]]
-        rep["ingest"][cfg] = {"seconds": ing["seconds"], "chunks": sum(chunks), "jev": r.get("jev"),
+        rep["ingest"][cfg] = {"seconds": ing["seconds"], "chunks": sum(chunks), "clef": r.get("clef"),
                               "dropped": sum(x.get("dropped", 0) for x in r["docs"]),
                               "quarantined": sum(x.get("quarantined", 0) for x in r["docs"]),
                               "fallbacks": [x["doc_id"] for x in r["docs"] if x.get("fallback")],
@@ -477,11 +477,11 @@ async def cmd_report(a: argparse.Namespace) -> None:
                                "p90": pct([r["ms"] for r in runs.values() if "ms" in r], 0.9)},
                 "degraded": sum(1 for r in runs.values() if r.get("degraded")),
             }
-            if mode == "jev":
-                costs = [r["jev"]["cost_usd"] for r in runs.values() if r.get("jev") and "cost_usd" in r["jev"]]
-                reqs = [r["jev"]["requests"] for r in runs.values() if r.get("jev")]
-                m["jev_cost_per_query_usd"] = round(statistics.mean(costs), 6) if costs else None
-                m["jev_requests_per_query"] = round(statistics.mean(reqs), 1) if reqs else None
+            if mode == "clef":
+                costs = [r["clef"]["cost_usd"] for r in runs.values() if r.get("clef") and "cost_usd" in r["clef"]]
+                reqs = [r["clef"]["requests"] for r in runs.values() if r.get("clef")]
+                m["clef_cost_per_query_usd"] = round(statistics.mean(costs), 6) if costs else None
+                m["clef_requests_per_query"] = round(statistics.mean(reqs), 1) if reqs else None
                 # where did evidence go? compare with the vector run on the same collection
                 vec = load_runs(d, cfg, "vector")
                 lost = [r["id"] for r in ans if not hit(r) and vec.get(r["id"]) and "error" not in vec[r["id"]]
@@ -505,7 +505,7 @@ async def cmd_report(a: argparse.Namespace) -> None:
     if judge_items:
         verdicts = await judge_all(judge_items, d / "judge_cache.json")
         for cfg in a.configs:
-            key = f"{cfg}/jev"
+            key = f"{cfg}/clef"
             if key not in rep["retrieval"]:
                 continue
             mine = [it for it in judge_items if it["key"].startswith(cfg + "|")]
@@ -528,10 +528,10 @@ async def cmd_report(a: argparse.Namespace) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage", choices=["build", "ingest", "query", "latency", "report"])
-    ap.add_argument("--dir", default=".jev-retrieval/bench")
+    ap.add_argument("--dir", default=".clef-rag/bench")
     ap.add_argument("--store", default="pgvector", choices=["pgvector", "qdrant-local"])
     ap.add_argument("--configs", nargs="+", default=list(CONFIGS), choices=list(CONFIGS))
-    ap.add_argument("--modes", nargs="+", default=["vector", "jev"], choices=["vector", "jev"])
+    ap.add_argument("--modes", nargs="+", default=["vector", "clef"], choices=["vector", "clef"])
     ap.add_argument("--per-doc", type=int, default=12)
     ap.add_argument("--per-holdout", type=int, default=7)
     ap.add_argument("--concurrency", type=int, default=4)

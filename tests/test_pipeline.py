@@ -2,14 +2,14 @@ import json
 
 import pytest
 
-from jev_retrieval import Document, Pipeline
-from jev_retrieval.chunk import ChunkConfig
-from jev_retrieval.cli import main
-from jev_retrieval.config import Config, render_template
-from jev_retrieval.enrich import EnrichConfig, Taxonomy
-from jev_retrieval.pipeline import ManifestMismatch
-from jev_retrieval.retrieve import ClassifyConfig, RetrieveConfig, route_passage
-from jev_retrieval.stores import MemoryStore
+from clef_rag import Document, Pipeline
+from clef_rag.chunk import ChunkConfig
+from clef_rag.cli import main
+from clef_rag.config import Config, render_template
+from clef_rag.enrich import EnrichConfig, Taxonomy
+from clef_rag.pipeline import ManifestMismatch
+from clef_rag.retrieve import ClassifyConfig, RetrieveConfig, route_passage
+from clef_rag.stores import MemoryStore
 
 TAX = {"version": 1, "fields": {"product": {"route": True, "options": {
     "billing": "Payments, invoices, refunds", "auth": "Tokens, sessions, SSO",
@@ -27,16 +27,16 @@ DOCS = [
 ]
 
 
-def make(fake_jev, store=None, **kw):
-    _, transport = fake_jev
+def make(fake_clef, store=None, **kw):
+    _, transport = fake_clef
     enrich = EnrichConfig(taxonomy=Taxonomy.from_dict(TAX))
-    return Pipeline(store=store or MemoryStore(), embedder="hash:128", jev_transport=transport,
+    return Pipeline(store=store or MemoryStore(), embedder="hash:128", clef_transport=transport,
                     chunking=ChunkConfig(min_tokens=4, target_tokens=40, max_tokens=200), enrich=enrich,
                     retrieve=RetrieveConfig(top_k=10), **kw)
 
 
-def test_ingest_drops_quarantines_and_tags(fake_jev):
-    rag = make(fake_jev)
+def test_ingest_drops_quarantines_and_tags(fake_clef):
+    rag = make(fake_clef)
     rep = rag.ingest(DOCS, collection="kb")
     by = {d.doc_id: d for d in rep.docs}
     assert all(d.status == "ingested" for d in rep.docs), rep.summary()
@@ -50,11 +50,11 @@ def test_ingest_drops_quarantines_and_tags(fake_jev):
     # chunks are enriched; a paragraph quarantined by the screen is stored as-is, untagged
     assert all("tag_product_p" in r.metadata for r in recs if r.metadata["chunker"] != "screen")
     assert rag.store.get_manifest("kb")["embedder"] == "hash:128"
-    assert rep.jev["requests"] > 0
+    assert rep.clef["requests"] > 0
 
 
-def test_reingest_skips_unchanged_and_deletes_stale(fake_jev):
-    rag = make(fake_jev)
+def test_reingest_skips_unchanged_and_deletes_stale(fake_clef):
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     n_before = len(rag.store.list_ids("kb"))
     rep = rag.ingest(DOCS, collection="kb")
@@ -67,19 +67,19 @@ def test_reingest_skips_unchanged_and_deletes_stale(fake_jev):
     assert texts and all("14 days" not in t for t in texts)
 
 
-def test_manifest_blocks_a_different_embedder(fake_jev):
+def test_manifest_blocks_a_different_embedder(fake_clef):
     store = MemoryStore()
-    make(fake_jev, store=store).ingest(DOCS[:1], collection="kb")
-    _, transport = fake_jev
-    other = Pipeline(store=store, embedder="hash:64", jev_transport=transport, trace_dir=None)
+    make(fake_clef, store=store).ingest(DOCS[:1], collection="kb")
+    _, transport = fake_clef
+    other = Pipeline(store=store, embedder="hash:64", clef_transport=transport, trace_dir=None)
     with pytest.raises(ManifestMismatch):
         other.ingest(DOCS[:1], collection="kb", force=True)
     with pytest.raises(ManifestMismatch):
         other.retrieve("tokens?", collection="kb")
 
 
-def test_retrieve_routes_classifies_and_gates(fake_jev):
-    rag = make(fake_jev)
+def test_retrieve_routes_classifies_and_gates(fake_clef):
+    rag = make(fake_clef)
     rag.retrieve_cfg.route.min_candidates = 1
     rag.ingest(DOCS, collection="kb")
     r = rag.retrieve("How long do refresh tokens last?", collection="kb")
@@ -89,8 +89,8 @@ def test_retrieve_routes_classifies_and_gates(fake_jev):
     assert "Ignore all previous" not in r.to_prompt()
 
 
-def test_route_retries_unfiltered_when_too_few_hits(fake_jev):
-    rag = make(fake_jev)
+def test_route_retries_unfiltered_when_too_few_hits(fake_clef):
+    rag = make(fake_clef)
     rag.retrieve_cfg.route.min_candidates = 50
     rag.ingest(DOCS, collection="kb")
     r = rag.retrieve("How long do refresh tokens last?", collection="kb")
@@ -98,17 +98,17 @@ def test_route_retries_unfiltered_when_too_few_hits(fake_jev):
     assert r.trace["route"]["fields"]["product"]["filter"] == "auth"
 
 
-def test_conflict_block(fake_jev):
-    rag = make(fake_jev)
+def test_conflict_block(fake_clef):
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     r = rag.retrieve("Refresh tokens expire after 30 days; how do I extend that token?", collection="kb")
     assert r.conflicts and "14 days" in r.conflicts[0].text
     assert "<conflicting_evidence" in r.to_prompt()
 
 
-def test_abstains_off_topic(fake_jev):
+def test_abstains_off_topic(fake_clef):
     """Default rank mode keeps the top passages; the gate is what abstains (no LLM call)."""
-    rag = make(fake_jev)
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     r = rag.retrieve("What is the capital of France?", collection="kb")
     assert r.abstain and r.filter_used is None
@@ -117,9 +117,9 @@ def test_abstains_off_topic(fake_jev):
     assert rag.answer("What is the capital of France?", collection="kb").abstained
 
 
-def test_abstains_off_topic_threshold_mode_keeps_nothing(fake_jev):
+def test_abstains_off_topic_threshold_mode_keeps_nothing(fake_clef):
     """select: threshold drops every off-topic passage, so it abstains with nothing kept."""
-    rag = make(fake_jev)
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     rag.retrieve_cfg.classify = ClassifyConfig(select="threshold", max_passages=8)
     r = rag.retrieve("What is the capital of France?", collection="kb")
@@ -127,13 +127,13 @@ def test_abstains_off_topic_threshold_mode_keeps_nothing(fake_jev):
 
 
 def test_default_classification_is_rank_top5():
-    """Chosen on the M2 public sets (docs/RESULTS.md)."""
+    """Chosen with Jev on the upstream M2 public sets (jev-rag-retrieval docs/RESULTS.md)."""
     cfg = ClassifyConfig()
     assert cfg.select == "rank" and cfg.max_passages == 5
 
 
-def test_quarantined_never_retrieved(fake_jev):
-    rag = make(fake_jev)
+def test_quarantined_never_retrieved(fake_clef):
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     rag.retrieve_cfg.classify.mode = "off"
     rag.retrieve_cfg.gate.mode = "off"
@@ -141,26 +141,26 @@ def test_quarantined_never_retrieved(fake_jev):
     assert all("Ignore all previous" not in p.text for p in r.passages)
 
 
-def test_jev_down_at_query_time_degrades(fake_jev):
-    fj, _ = fake_jev
-    rag = make(fake_jev)
+def test_clef_down_at_query_time_degrades(fake_clef):
+    fj, _ = fake_clef
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     fj.fail_status, fj.fail_times = 401, 10_000
-    rag.jev_config.cache_dir = None
+    rag.clef_config.cache_dir = None
     r = rag.retrieve("How long do refresh tokens last?", collection="kb")
     assert r.degraded and not r.abstain and r.passages
 
 
-def test_no_key_vector_only(fake_jev, monkeypatch):
-    rag = make(fake_jev)
+def test_no_key_vector_only(fake_clef, monkeypatch):
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
-    monkeypatch.delenv("TYPESAFE_API_KEY")
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN")
     r = rag.retrieve("refresh tokens", collection="kb")
     assert r.degraded and r.passages and r.gate_p is None
 
 
-def test_shadow_classification_keeps_vector_order(fake_jev):
-    rag = make(fake_jev)
+def test_shadow_classification_keeps_vector_order(fake_clef):
+    rag = make(fake_clef)
     rag.ingest(DOCS, collection="kb")
     rag.retrieve_cfg.classify.mode = "shadow"
     r = rag.retrieve("How long do refresh tokens last?", collection="kb")
@@ -180,20 +180,20 @@ def test_route_passage_order():
     assert route_passage({"is_relevant": 0.1, "contains_answer_evidence": 0.1}, rank) == "include"  # ranked, not dropped
 
 
-def test_dry_run_makes_no_calls(fake_jev):
-    fj, _ = fake_jev
-    rag = make(fake_jev)
+def test_dry_run_makes_no_calls(fake_clef):
+    fj, _ = fake_clef
+    rag = make(fake_clef)
     rep = rag.ingest(DOCS, collection="kb", dry_run=True)
-    assert fj.calls == [] and rep.estimate["jev_requests"] > 0
+    assert fj.calls == [] and rep.estimate["clef_requests"] > 0
     assert not rag.store.collection_exists("kb")
 
 
-def test_dry_run_estimate_is_zero_when_no_stage_uses_jev(fake_jev):
-    rag = make(fake_jev)
+def test_dry_run_estimate_is_zero_when_no_stage_uses_clef(fake_clef):
+    rag = make(fake_clef)
     rag.chunking = ChunkConfig(method="structural")
     rag.enrich_cfg = EnrichConfig(mode="off")
     rep = rag.ingest(DOCS, collection="kb", dry_run=True)
-    assert rep.estimate["jev_requests"] == 0 and rep.estimate["jev_cost_usd"] == 0
+    assert rep.estimate["clef_requests"] == 0 and rep.estimate["clef_cost_usd"] == 0
 
 
 def test_taxonomy_requires_other():
@@ -210,7 +210,7 @@ def test_config_template_round_trips():
         Config({"retrieve": {"topk": 3}})
 
 
-def test_cli_end_to_end_without_jev(tmp_path, capsys):
+def test_cli_end_to_end_without_clef(tmp_path, capsys):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "a.md").write_text("# A\n\nRefresh tokens expire after 14 days.\n")
     (tmp_path / "docs" / "b.txt").write_text("Invoices are due in 30 days.\n")
@@ -224,9 +224,9 @@ def test_cli_end_to_end_without_jev(tmp_path, capsys):
     assert main(["inspect", "docs/a.md", "--compare", "fixed"]) == 0
 
 
-def test_paragraph_screen_quarantines_only_the_injection(fake_jev):
+def test_paragraph_screen_quarantines_only_the_injection(fake_clef):
     """The injected paragraph is quarantined alone; the facts beside it stay retrievable (FR-E6)."""
-    rag = make(fake_jev)
+    rag = make(fake_clef)
     rag.ingest([DOCS[2]], collection="kb")
     recs = rag.store.get("kb", rag.store.list_ids("kb"))
     quarantined = [r for r in recs if r.metadata["quarantined"]]
@@ -240,9 +240,9 @@ def test_paragraph_screen_quarantines_only_the_injection(fake_jev):
     assert DOCS[2].text[q["char_start"]:q["char_end"]] == quarantined[0].text
 
 
-def test_short_junk_inside_content_is_cut_not_merged(fake_jev):
+def test_short_junk_inside_content_is_cut_not_merged(fake_clef):
     """A cookie banner shorter than min_tokens used to be merged into a content chunk."""
-    rag = make(fake_jev)
+    rag = make(fake_clef)
     rag.chunking = ChunkConfig(min_tokens=64, target_tokens=200, max_tokens=400)
     doc = Document(doc_id="mixed", title="Billing", text=(
         "# Billing\n\nInvoices are due in 30 days. A refund is available for annual plans only.\n\n"
@@ -255,9 +255,9 @@ def test_short_junk_inside_content_is_cut_not_merged(fake_jev):
     assert rep.docs[0].dropped == 1
 
 
-def test_paragraph_screen_shadow_and_off(fake_jev):
-    fj, _ = fake_jev
-    rag = make(fake_jev)
+def test_paragraph_screen_shadow_and_off(fake_clef):
+    fj, _ = fake_clef
+    rag = make(fake_clef)
     rag.enrich_cfg.screen_paragraphs = "shadow"
     rag.enrich_cfg.mode = "on"
     rep = rag.ingest([DOCS[3]], collection="kb_shadow")

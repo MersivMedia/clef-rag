@@ -11,10 +11,10 @@ import random
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.home() / "jev-rag-retrieval"))
-from jev_retrieval.eval import load_beir, load_qasper  # noqa: E402
+sys.path.insert(0, str(Path.home() / "clef-rag"))
+from clef_rag.eval import load_beir, load_qasper  # noqa: E402
 
-RAW = Path.home() / "jev-rag-retrieval/.jev-retrieval/eval_data"
+RAW = Path.home() / "clef-rag/.clef-rag/eval_data"
 OUT = RAW / "prepared"
 
 

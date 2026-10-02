@@ -1,8 +1,8 @@
-"""Live smoke test against the real Jev API and a real embedder. Opt-in:
+"""Live smoke test against the real Clef API and a real embedder. Opt-in:
 
-    JEV_RETRIEVAL_LIVE=1 AI_GATEWAY_API_KEY=... pytest tests/test_live.py -m live
+    CLEF_RAG_LIVE=1 CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... OPENAI_API_KEY=... pytest tests/test_live.py -m live
 
-Uses whichever Jev key is set (TYPESAFE_API_KEY, AI_GATEWAY_API_KEY, OPENROUTER_API_KEY).
+Clef: Workers AI (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID) or a self-hosted server (CLEF_BASE_URL).
 Embeddings: OpenAI if OPENAI_API_KEY is set, else Vercel AI Gateway. Costs well under $0.01.
 """
 
@@ -14,19 +14,20 @@ import pytest
 
 pytestmark = pytest.mark.live
 
-LIVE = os.environ.get("JEV_RETRIEVAL_LIVE") == "1"
-KEYS = {k: os.environ.get(k) for k in ("TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY")}
+LIVE = os.environ.get("CLEF_RAG_LIVE") == "1"
+KEYS = {k: os.environ.get(k) for k in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLEF_BASE_URL", "CLEF_API_KEY",
+                                       "AI_GATEWAY_API_KEY", "OPENAI_API_KEY")}
 
 
 @pytest.fixture
 def live_env(monkeypatch):
     if not LIVE:
-        pytest.skip("set JEV_RETRIEVAL_LIVE=1 to run live tests")
+        pytest.skip("set CLEF_RAG_LIVE=1 to run live tests")
     for k, v in KEYS.items():  # conftest clears keys for hermetic tests; put them back
         if v:
             monkeypatch.setenv(k, v)
-    if not any(KEYS[k] for k in ("TYPESAFE_API_KEY", "AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY")):
-        pytest.skip("no Jev key")
+    if not ((KEYS["CLOUDFLARE_API_TOKEN"] and KEYS["CLOUDFLARE_ACCOUNT_ID"]) or KEYS["CLEF_BASE_URL"]):
+        pytest.skip("no Clef backend configured")
     if KEYS["OPENAI_API_KEY"]:
         return "openai:text-embedding-3-small"
     if KEYS["AI_GATEWAY_API_KEY"]:
@@ -35,17 +36,17 @@ def live_env(monkeypatch):
 
 
 def test_live_end_to_end(live_env, tmp_path):
-    from jev_retrieval import Document, Pipeline
-    from jev_retrieval.chunk import ChunkConfig
-    from jev_retrieval.enrich import EnrichConfig, Taxonomy
-    from jev_retrieval.jev import JevConfig
-    from jev_retrieval.retrieve import RetrieveConfig, RouteConfig
-    from jev_retrieval.stores import MemoryStore
+    from clef_rag import Document, Pipeline
+    from clef_rag.chunk import ChunkConfig
+    from clef_rag.enrich import EnrichConfig, Taxonomy
+    from clef_rag.clef import ClefConfig
+    from clef_rag.retrieve import RetrieveConfig, RouteConfig
+    from clef_rag.stores import MemoryStore
 
     tax = Taxonomy.from_dict({"fields": {"product": {"route": True, "options": {
         "billing": "Payments, invoices, refunds, plans", "auth": "Sign-in, sessions, tokens, SSO",
         "other": "Anything else"}}}})
-    rag = Pipeline(store=MemoryStore(), embedder=live_env, jev=JevConfig(cache_dir=str(tmp_path / "c")),
+    rag = Pipeline(store=MemoryStore(), embedder=live_env, clef=ClefConfig(cache_dir=str(tmp_path / "c")),
                    chunking=ChunkConfig(min_tokens=5, target_tokens=15, max_tokens=200),
                    enrich=EnrichConfig(taxonomy=tax),
                    retrieve=RetrieveConfig(top_k=5, route=RouteConfig(min_candidates=1)))
@@ -58,7 +59,7 @@ def test_live_end_to_end(live_env, tmp_path):
     rep = rag.ingest(docs, collection="live")
     assert rep.count("failed") == 0, rep.summary()
     auth = next(d for d in rep.docs if d.doc_id == "auth")
-    assert auth.chunker == "jev" and auth.chunks == 2
+    assert auth.chunker == "clef" and auth.chunks == 2
     texts = [r.text for r in rag.store.get("live", rag.store.list_ids("live", {"eq": {"doc_id": "auth"}}))]
     token_chunk = next(t for t in texts if "Refresh tokens" in t)
     assert "renewed once" in token_chunk and "billing" not in token_chunk, "cut should land at the topic change"

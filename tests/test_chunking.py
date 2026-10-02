@@ -2,13 +2,13 @@ import asyncio
 
 import pytest
 
-from jev_retrieval.chunk import ChunkConfig, chunk_document
-from jev_retrieval.chunk.boundaries import BoundaryConfig, candidate_gaps, plan_requests
-from jev_retrieval.chunk.segmenter import Gap, SegmenterConfig, segment
-from jev_retrieval.jev import JevClient, JevConfig
-from jev_retrieval.parse import build_units, html_to_markdown, parse_blocks, split_sentences
-from jev_retrieval.tokens import estimate_tokens
-from jev_retrieval.types import Document
+from clef_rag.chunk import ChunkConfig, chunk_document
+from clef_rag.chunk.boundaries import BoundaryConfig, candidate_gaps, plan_requests
+from clef_rag.chunk.segmenter import Gap, SegmenterConfig, segment
+from clef_rag.clef import ClefClient, ClefConfig
+from clef_rag.parse import build_units, html_to_markdown, parse_blocks, split_sentences
+from clef_rag.tokens import estimate_tokens
+from clef_rag.types import Document
 
 DOC = """# Guide
 
@@ -112,31 +112,31 @@ def test_structural_and_fixed_never_cross_headings():
             assert not content_before, f"{method} chunk crosses a heading: {c.text!r}"
 
 
-def test_jev_chunking_cuts_at_topic_change(fake_jev):
-    fj, transport = fake_jev
+def test_clef_chunking_cuts_at_topic_change(fake_clef):
+    fj, transport = fake_clef
     doc = Document(text=DOC, doc_id="g", title="Guide")
 
     async def go():
-        async with JevClient(JevConfig(cache_dir=None), transport=transport) as jev:
-            return await chunk_document(doc, ChunkConfig(method="jev", min_tokens=1, target_tokens=30, max_tokens=120), jev=jev,
+        async with ClefClient(ClefConfig(cache_dir=None), transport=transport) as clef:
+            return await chunk_document(doc, ChunkConfig(method="clef", min_tokens=1, target_tokens=30, max_tokens=120), clef=clef,
                                         count=estimate_tokens)
 
     chunks, tr = asyncio.run(go())
-    assert tr.method_used == "jev" and tr.jev_requests == 1
+    assert tr.method_used == "clef" and tr.clef_requests == 1
     tokens_chunk = next(c for c in chunks if "Refresh tokens" in c.text)
     assert "Invoices" not in tokens_chunk.text  # the cut lands at the topic change
     assert "They can be renewed once" in tokens_chunk.text  # "They ..." is never orphaned
     assert all(c.id and c.embed_text.startswith("Guide >") for c in chunks)
 
 
-def test_jev_failure_falls_back_to_structural(fake_jev):
-    fj, transport = fake_jev
+def test_clef_failure_falls_back_to_structural(fake_clef):
+    fj, transport = fake_clef
     fj.fail_status, fj.fail_times = 401, 99
     doc = Document(text=DOC, doc_id="g")
 
     async def go():
-        async with JevClient(JevConfig(cache_dir=None, max_retries=0), transport=transport) as jev:
-            return await chunk_document(doc, ChunkConfig(method="jev"), jev=jev, count=estimate_tokens)
+        async with ClefClient(ClefConfig(cache_dir=None, max_retries=0), transport=transport) as clef:
+            return await chunk_document(doc, ChunkConfig(method="clef"), clef=clef, count=estimate_tokens)
 
     chunks, tr = asyncio.run(go())
     assert tr.method_used == "structural" and "401" in (tr.fallback_reason or "")
@@ -161,15 +161,15 @@ def test_unknown_method():
         asyncio.run(chunk_document(Document(text="x"), ChunkConfig(method="nope")))
 
 
-def test_default_chunker_is_structural_and_makes_no_jev_calls(fake_jev):
-    """Structural is the default (docs/RESULTS.md: Jev chunking tied or lost on every benchmark)."""
-    fj, transport = fake_jev
+def test_default_chunker_is_structural_and_makes_no_clef_calls(fake_clef):
+    """Structural is the default (upstream jev-rag-retrieval: model-placed chunking tied or lost on every benchmark)."""
+    fj, transport = fake_clef
     assert ChunkConfig().method == "structural"
     doc = Document(text=DOC, doc_id="g", title="Guide")
 
     async def go():
-        async with JevClient(JevConfig(cache_dir=None), transport=transport) as jev:
-            return await chunk_document(doc, ChunkConfig(), jev=jev, count=estimate_tokens)
+        async with ClefClient(ClefConfig(cache_dir=None), transport=transport) as clef:
+            return await chunk_document(doc, ChunkConfig(), clef=clef, count=estimate_tokens)
 
     chunks, tr = asyncio.run(go())
-    assert chunks and tr.method_used == "structural" and tr.jev_requests == 0 and not tr.fallback_reason
+    assert chunks and tr.method_used == "structural" and tr.clef_requests == 0 and not tr.fallback_reason

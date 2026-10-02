@@ -2,8 +2,8 @@
 
     python scripts/bench_messy.py build    # load files, add synthetic docs, plant traps, write questions
     python scripts/bench_messy.py reparse  # re-load files with current loaders; same questions and traps
-    python scripts/bench_messy.py ingest   # jev / structural / fixed collections
-    python scripts/bench_messy.py query    # vector-only and full Jev retrieval
+    python scripts/bench_messy.py ingest   # clef / structural / fixed collections
+    python scripts/bench_messy.py query    # vector-only and full Clef retrieval
     python scripts/bench_messy.py report
 
 Inputs: put PDFs and saved HTML pages in <dir>/raw/ (see RESULTS.md for the set used).
@@ -18,7 +18,7 @@ dataset.json so a run can be reproduced exactly:
   (a mix of blunt and disguised wording); the questions that target the surrounding
   paragraphs check that quarantining them doesn't cost answers
 
-Metrics on top of bench_wiki's: injection passages retrieved (vector vs Jev), quarantine
+Metrics on top of bench_wiki's: injection passages retrieved (vector vs Clef), quarantine
 and drop counts at ingest with a hand-checkable list of what was dropped, and hit rates
 split by source type (pdf / web / transcript).
 """
@@ -40,9 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bench_wiki as bw  # noqa: E402
-from jev_retrieval import Document  # noqa: E402
-from jev_retrieval.envfile import load_env_file  # noqa: E402
-from jev_retrieval.parse import load_file  # noqa: E402
+from clef_rag import Document  # noqa: E402
+from clef_rag.envfile import load_env_file  # noqa: E402
+from clef_rag.parse import load_file  # noqa: E402
 
 BOILERPLATE = [
     "We use cookies to improve your experience on our site. By continuing to browse you agree to our use of "
@@ -319,7 +319,7 @@ async def cmd_report(a: argparse.Namespace) -> None:
         lost_to_quarantine = [qid for qid, q in qs.items() if q["answerable"] and not covered[qid]
                               and any(bw.evidence_in(q["evidence"], r.text) for r in quarantined)]
         rep["ingest"][cfg] = {
-            "chunks": len(recs), "seconds": ingest.get(cfg, {}).get("seconds"), "jev": ing.get("jev"),
+            "chunks": len(recs), "seconds": ingest.get(cfg, {}).get("seconds"), "clef": ing.get("clef"),
             "quarantined": len(quarantined), "quarantined_injections": len(inj_quarantined),
             "injection_chunks_unquarantined": len(inj_stored_clean),
             "dropped": len(dropped), "boilerplate_traps_dropped": bp_dropped,
@@ -366,10 +366,10 @@ async def cmd_report(a: argparse.Namespace) -> None:
             m["boilerplate_in_context"] = sum(1 for r in ok.values() for t in ctx(r) if is_trap(t, traps, "boilerplate"))
             ct = [sum(bw.estimate_tokens(t) for t in ctx(r)) for r in ok.values() if not r["abstain"]]
             m["context_tokens_mean"] = round(sum(ct) / max(1, len(ct)), 1)
-            if mode == "jev":
-                costs = [r["jev"]["cost_usd"] for r in ok.values() if r.get("jev")]
-                m["jev_cost_per_query_usd"] = round(sum(costs) / max(1, len(costs)), 6)
-                m["cached_answers"] = sum((r.get("jev") or {}).get("cached", 0) for r in ok.values())
+            if mode == "clef":
+                costs = [r["clef"]["cost_usd"] for r in ok.values() if r.get("clef")]
+                m["clef_cost_per_query_usd"] = round(sum(costs) / max(1, len(costs)), 6)
+                m["cached_answers"] = sum((r.get("clef") or {}).get("cached", 0) for r in ok.values())
             rep["retrieval"][f"{cfg}/{mode}"] = m
 
     (d / "report.json").write_text(json.dumps(rep, indent=1, default=str))
@@ -379,10 +379,10 @@ async def cmd_report(a: argparse.Namespace) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage", choices=["build", "reparse", "ingest", "query", "report"])
-    ap.add_argument("--dir", default=".jev-retrieval/bench_messy")
+    ap.add_argument("--dir", default=".clef-rag/bench_messy")
     ap.add_argument("--store", default="pgvector", choices=["pgvector", "qdrant-local"])
     ap.add_argument("--configs", nargs="+", default=list(bw.CONFIGS), choices=list(bw.CONFIGS))
-    ap.add_argument("--modes", nargs="+", default=["vector", "jev"], choices=["vector", "jev"])
+    ap.add_argument("--modes", nargs="+", default=["vector", "clef"], choices=["vector", "clef"])
     ap.add_argument("--per-doc", type=int, default=8)
     ap.add_argument("--per-transcript", type=int, default=8)
     ap.add_argument("--per-holdout", type=int, default=6)

@@ -2,18 +2,18 @@ import asyncio
 
 import pytest
 
-from jev_retrieval import Document, Pipeline
-from jev_retrieval.embed import make_embedder
+from clef_rag import Document, Pipeline
+from clef_rag.embed import make_embedder
 
 lc = pytest.importorskip("langchain_core")
 
 
-def test_langchain_bridge_stores_jev_retrievals_vectors():
+def test_langchain_bridge_stores_clef_rags_vectors():
     from langchain_core.vectorstores import InMemoryVectorStore
-    from jev_retrieval.stores.langchain import JevRetrievalEmbeddings, LangChainStore
+    from clef_rag.stores.langchain import ClefRagEmbeddings, LangChainStore
 
     emb = make_embedder("hash:64")
-    store = InMemoryVectorStore(JevRetrievalEmbeddings(emb))
+    store = InMemoryVectorStore(ClefRagEmbeddings(emb))
     rag = Pipeline(store=LangChainStore(store), embedder=emb, trace_dir=None)
     rag.ingest([Document(doc_id="a", title="Auth", text="# Tokens\n\nRefresh tokens expire after 14 days.")],
                collection="kb")
@@ -30,7 +30,7 @@ def test_pipeline_requires_an_embedder():
 
 
 def test_embed_text_does_not_repeat_title():
-    from jev_retrieval.chunk import ChunkConfig, chunk_document
+    from clef_rag.chunk import ChunkConfig, chunk_document
     doc = Document(doc_id="g", title="Guide", text="# Guide\n\n## Tokens\n\nRefresh tokens expire after 14 days.")
     chunks, _ = asyncio.run(chunk_document(doc, ChunkConfig(method="structural")))
     assert chunks[0].embed_text.startswith("Guide > Tokens\n\n")
