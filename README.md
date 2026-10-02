@@ -12,7 +12,7 @@ Clef-steered ingestion and retrieval for any vector database, on Cloudflare Work
 - **Your database.** Adapters for Postgres + pgvector, Qdrant and Chroma, plus a bridge to any LangChain vector store, all held to one conformance suite. A Pinecone adapter is included as experimental.
 - **Self-hosting is free per call.** On `self-hosted` and `local` there's no per-token charge, just your GPU. Cost reports show $0 for them and the Workers AI list price otherwise.
 
-> **Status: converted from [jev-rag-retrieval](https://github.com/MersivMedia/jev-rag-retrieval), not yet benchmarked with Clef.** clef-rag is jev-rag-retrieval with its model client swapped for Clef. Clef's API is System One-compatible, so every question, threshold and pipeline stage is unchanged. Tested: 187 offline tests, plus the local and `serve` backends end to end against a tiny random model on CPU. **Not yet run:** Workers AI with a real key, and anything with the real Clef weights. Every quality number in jev-rag-retrieval was measured with **Jev**, not Clef. They are [upstream results](https://github.com/MersivMedia/jev-rag-retrieval/blob/main/docs/RESULTS.md) and are not claimed here. Thresholds tuned on Jev may need retuning for Clef: run `clef-rag eval` on your data. See [Known issues](docs/KNOWN_ISSUES.md).
+> **Status: converted from [jev-rag-retrieval](https://github.com/MersivMedia/jev-rag-retrieval), not yet benchmarked with Clef.** clef-rag is jev-rag-retrieval with its model client swapped for Clef. Clef's API is System One-compatible, so every question, threshold and pipeline stage is unchanged. Tested: 187 offline tests, plus the local and `serve` backends end to end against a tiny random model on CPU. **Not yet run:** Workers AI with a real key, and anything with the real Clef weights. Every quality number in jev-rag-retrieval was measured with **Jev**, not Clef. They are [upstream results](https://github.com/MersivMedia/jev-rag-retrieval/blob/main/docs/RESULTS.md) and are not claimed here. Thresholds tuned on Jev may need retuning for Clef: run `clef-rag eval` on your data. See [Known issues](https://github.com/MersivMedia/clef-rag/blob/main/docs/KNOWN_ISSUES.md).
 
 clef-rag uses [Clef](https://huggingface.co/Cloudflare/clef), Cloudflare's open-source decision model ([launch post](https://blog.cloudflare.com/clef-decision-models), [Workers AI docs](https://developers.cloudflare.com/workers-ai/models/clef/)). Clef never writes text. It answers typed questions (a yes/no probability, one option from a list, or a score on a scale), and plain code with visible thresholds decides what happens. Every decision is logged with its probabilities.
 
@@ -47,10 +47,10 @@ clef-rag uses [Clef](https://huggingface.co/Cloudflare/clef), Cloudflare's open-
 
 Python 3.10 to 3.13. The package installs as `clef-rag`; you import it as `clef_rag` and run it as the `clef-rag` command. The core needs only `httpx`, `pydantic` and `pyyaml`; each database, embedder and file format is an extra.
 
-Until the first PyPI release, install from GitHub:
+Install from PyPI (add the extras for your database and embedder):
 
 ```bash
-pip install "clef-rag[qdrant] @ git+https://github.com/MersivMedia/clef-rag"
+pip install "clef-rag[qdrant]"
 ```
 
 | Extra | Installs |
@@ -76,7 +76,7 @@ With `backend: auto` (the default), clef-rag uses Workers AI when both Cloudflar
 
 Then add the key for your embedding provider (`OPENAI_API_KEY`, or `AI_GATEWAY_API_KEY` with the `gateway:` embedder) and your database's connection settings.
 
-Put them in a `.env` file: [`.env.example`](.env.example) lists every variable clef-rag reads, blank, with a note on each. The `clef-rag` CLI loads `./.env` before every command. Variables already set in your shell win, blank lines in the file are ignored, and it warns if the file is readable by other users. Use `--env-file path` for another file or `--no-env-file` to skip it. The Python API doesn't read `.env` on its own; call `clef_rag.envfile.load_env_file()` first if you want the same behaviour.
+Put them in a `.env` file: [`.env.example`](https://github.com/MersivMedia/clef-rag/blob/main/.env.example) lists every variable clef-rag reads, blank, with a note on each. The `clef-rag` CLI loads `./.env` before every command. Variables already set in your shell win, blank lines in the file are ignored, and it warns if the file is readable by other users. Use `--env-file path` for another file or `--no-env-file` to skip it. The Python API doesn't read `.env` on its own; call `clef_rag.envfile.load_env_file()` first if you want the same behaviour.
 
 Without a Clef backend everything still runs, but nothing is screened or tagged, and retrieval returns plain vector ranking marked `degraded`.
 
@@ -93,7 +93,7 @@ clef:
 **Self-hosted**: run the weights on a GPU you control, which matters for regulated data. On the GPU box:
 
 ```bash
-pip install "clef-rag[serve] @ git+https://github.com/MersivMedia/clef-rag"
+pip install "clef-rag[serve]"
 clef-rag serve Cloudflare/clef-flash --host 0.0.0.0 --port 8000 --api-key-env CLEF_SERVER_KEY
 #   or a fine-tuned release:  clef-rag serve /models/clef-flash-insurance-v1
 ```
@@ -144,8 +144,8 @@ Every sync method has an async twin (`aingest`, `aretrieve`, `aanswer`) for use 
 
 Two sample files at the repo root:
 
-- [`clef-rag.example.yaml`](clef-rag.example.yaml): every setting with its default and a comment, plus a ready-to-uncomment block for each database. `clef-rag init --full` writes the same file. Plain `clef-rag init` writes the short version below.
-- [`.env.example`](.env.example): every environment variable, blank.
+- [`clef-rag.example.yaml`](https://github.com/MersivMedia/clef-rag/blob/main/clef-rag.example.yaml): every setting with its default and a comment, plus a ready-to-uncomment block for each database. `clef-rag init --full` writes the same file. Plain `clef-rag init` writes the short version below.
+- [`.env.example`](https://github.com/MersivMedia/clef-rag/blob/main/.env.example): every environment variable, blank.
 
 Secrets never go in the YAML; it only names the variable to read (`api_key_env`, `dsn_env`). The short config:
 
@@ -593,7 +593,7 @@ pip install -e ".[qdrant,chroma,pgvector,langchain,dev]"
 pytest                                   # offline: fake Clef over httpx.MockTransport, no keys, no network
 
 # local + serve backends against a tiny random Clef-shaped release (CPU, no weight download)
-pip install -e ".[serve,dev]" && pip install clef-finetune@git+https://github.com/MersivMedia/clef-finetune
+pip install -e ".[serve,dev]" && pip install clef-finetune
 clef-finetune make-tiny /tmp/clef-tiny
 CLEF_RAG_TEST_TINY_RELEASE=/tmp/clef-tiny pytest tests/test_local_backend.py
 
@@ -609,15 +609,15 @@ CI runs the offline suite on Python 3.10, 3.12 and 3.13, the local/serve backend
 
 ## Roadmap
 
-- **Clef numbers.** Rerun the upstream benchmarks (SciFact, FiQA, QASPER, messy documents) with `clef` and `clef-flash`, retune thresholds, and publish them in [Results](docs/RESULTS.md).
+- **Clef numbers.** Rerun the upstream benchmarks (SciFact, FiQA, QASPER, messy documents) with `clef` and `clef-flash`, retune thresholds, and publish them in [Results](https://github.com/MersivMedia/clef-rag/blob/main/docs/RESULTS.md).
 - **Packed multi-passage classification.** Clef answers up to 64 questions in one forward pass, so scoring several passages per request should cut latency and tokens.
 - **Image-aware ingestion.** Clef reads images; pass page images or figures to screening and tagging.
 - **More databases and embedders**, hybrid search, `reenrich` / `reembed`, an MCP server.
 
 ## More
 
-- **[Results](docs/RESULTS.md)**: Clef measurements (none yet) and links to the upstream Jev results
-- **[Known issues](docs/KNOWN_ISSUES.md)**: current limits
+- **[Results](https://github.com/MersivMedia/clef-rag/blob/main/docs/RESULTS.md)**: Clef measurements (none yet) and links to the upstream Jev results
+- **[Known issues](https://github.com/MersivMedia/clef-rag/blob/main/docs/KNOWN_ISSUES.md)**: current limits
 - **[jev-rag-retrieval](https://github.com/MersivMedia/jev-rag-retrieval)**: the upstream project, its PRD and design decisions
 
 clef-rag is not affiliated with Cloudflare. Clef and Clef-flash are © Cloudflare, Inc., released under Apache-2.0. Treat injection screening as one layer of defence, never the only one.
